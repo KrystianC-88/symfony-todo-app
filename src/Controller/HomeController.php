@@ -12,6 +12,9 @@ use Symfony\Component\Serializer\SerializerInterface;
 use Symfony\Component\Serializer\Normalizer\AbstractNormalizer;
 use App\Entity\Task;
 use DateTime;
+use Symfony\Component\Serializer\Serializer;
+use Symfony\Component\Validator\Validator\ValidatorInterface;
+use Symfony\Component\Validator\Constraints as Assert;
 
 class HomeController extends AbstractController
 {
@@ -46,11 +49,11 @@ class HomeController extends AbstractController
 
         $task = $entityManager->getRepository(Task::class)->find($id);
         if(!$task) return $this->json(["result" => false,"message" => "Task with ID {$id} successfully deleted"]);
-
+        
         try{
             $entityManager->remove($task);
             $entityManager->flush();
-
+            
             $result = true;
 
             $taskJson = $serializer->serialize($task, 'json');
@@ -67,33 +70,56 @@ class HomeController extends AbstractController
         ]);
 
     }
+
+    private function validateTask($task_name, $description, $validator){
+        
+        // Validate the task name
+        $nameViolations = $validator->validate($task_name, [
+            new Assert\NotBlank(['message' => 'Task name should not be blank.']),
+            new Assert\Length(['max' => 255, 'maxMessage' => 'Task name should not exceed 255 characters.']),
+        ]);
+        
+        foreach ($nameViolations as $violation) {
+            return $violation->getMessage();
+        }
+
+        // Validate the description
+        $descriptionViolations = $validator->validate($description, [
+            new Assert\Length(['max' => 255, 'maxMessage' => 'Description should not exceed 255 characters.']),
+        ]);
+
+        foreach ($descriptionViolations as $violation) {
+            return $violation->getMessage();
+        }
+
+        return null; // no validation errors
+    }
+
     #[Route('/create', name: 'todo_create')]
-    public function create(Request $request, EntityManagerInterface $entityManager): JSONResponse
+    public function create(Request $request, EntityManagerInterface $entityManager, ValidatorInterface $validator, SerializerInterface $serializer): JSONResponse
     {
         $task_name = $request->request->get('task');
         $description = $request->request->get('description');
         $currentDate = new DateTime();
 
+        $errors = $this->validateTask($task_name, $description, $validator);
+        if(count($errors) > 0) return $this->json(['result' => false,'errors' => $errors]);
+    
         $task = new Task();
         $task->setName($task_name);
-
-        if($description != NULL && strlen($description) > 0){
-            $task->setDescription($description);
-        }
-        
-
         $task->setCreateDate($currentDate);
 
         $entityManager->persist($task);
         $entityManager->flush();
 
         $result = false;
-        if ($task->getId() !== NULL) {
-            $result = true;
-        }
-
+        
+        $result = $task->getId() !== null;
+        $taskJson = $result ? $serializer->serialize($task, 'json') : null;
+        
         return $this->json([
             'result' => $result,
+            'task' => $taskJson
         ]);
     }
 
